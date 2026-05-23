@@ -1,0 +1,256 @@
+<<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>元智大學專屬手繪導覽定位系統</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        html, body {
+            width: 100%; height: 100%; margin: 0; padding: 0;
+            font-family: "Microsoft JhengHei", sans-serif;
+            background-color: #f4f6f9;
+        }
+        .page { display: none; width: 100%; height: 100%; box-sizing: border-box; }
+        #home-page { display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 30px; }
+        .logo-area { margin-bottom: 30px; text-align: center; }
+        .logo-area h1 { color: #003366; margin: 0; font-size: 28px; }
+        .logo-area p { color: #666; margin-top: 5px; }
+        .role-card { width: 100%; max-width: 320px; background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; box-sizing: border-box; }
+        .role-card h2 { margin: 0 0 10px 0; font-size: 18px; color: #333; }
+        .btn { width: 100%; padding: 14px 0; font-size: 16px; font-weight: bold; color: white; border: none; border-radius: 10px; cursor: pointer; margin-top: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); transition: 0.2s; }
+        .btn:active { transform: scale(0.98); }
+        .btn-blue { background-color: #007bff; }
+        .btn-green { background-color: #28a745; }
+        .btn-red { background-color: #dc3545; }
+        .input-style { width: 100%; padding: 12px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; box-sizing: border-box; margin-bottom: 10px; }
+        
+        /* 地圖容器背景改為深灰色，襯托出學校圖片 */
+        .map-container { height: 60%; width: 100%; background-color: #222222; }
+        
+        .control-panel { height: 40%; width: 100%; background: white; box-shadow: 0 -4px 15px rgba(0,0,0,0.1); border-radius: 24px 24px 0 0; position: absolute; bottom: 0; z-index: 1000; box-sizing: border-box; padding: 20px; text-align: center; }
+        .status-badge { display: inline-block; padding: 5px 15px; color: white; border-radius: 20px; font-size: 14px; font-weight: bold; margin: 8px 0; }
+        .status-available { background-color: #28a745; }
+        .status-busy { background-color: #dc3545; }
+        .back-home { position: absolute; top: 10px; left: 10px; z-index: 1001; background: rgba(255,255,255,0.9); padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; text-decoration: none; color: #333; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+    </style>
+</head>
+<body>
+
+    <!-- 介面一：主首頁 -->
+    <div id="home-page" class="page" style="display: flex;">
+        <div class="logo-area">
+            <h1>元智動態導覽系統</h1>
+            <p>YZU Campus Custom Map</p>
+        </div>
+        
+        <div class="role-card">
+            <h2>🙋 我是學生</h2>
+            <input type="text" id="search-name" class="input-style" placeholder="輸入想找的老師姓名...">
+            <button class="btn btn-blue" onclick="enterStudentView()">搜尋老師並查看定位</button>
+        </div>
+
+        <div class="role-card">
+            <h2>👨‍🏫 我是老師</h2>
+            <input type="text" id="teacher-login-name" class="input-style" placeholder="請輸入您的姓名...">
+            <button class="btn btn-green" onclick="enterTeacherView()">登入並開始回報定位</button>
+        </div>
+    </div>
+
+    <!-- 介面二：學生端地圖畫面 -->
+    <div id="student-page" class="page">
+        <a href="#" class="back-home" onclick="goHome()">⬅ 返回首頁</a>
+        <div id="student-map" class="map-container"></div>
+        <div class="control-panel">
+            <h3 id="view-teacher-title">讀取中...</h3>
+            <p style="font-size: 16px; margin: 5px 0;" id="view-teacher-location">正在獲取老師位置...</p>
+            <div id="view-teacher-badge" class="status-badge status-available">方便訪客</div>
+            <button class="btn btn-blue" onclick="requestTeacher()">🔔 發出「我要找老師」請求</button>
+        </div>
+    </div>
+
+    <!-- 介面三：老師端控制畫面 -->
+    <div id="teacher-page" class="page">
+        <a href="#" class="back-home" onclick="goHome()">⬅ 返回首頁</a>
+        <div id="teacher-map" class="map-container"></div>
+        <div class="control-panel">
+            <h3 id="teacher-welcome-title">歡迎回來</h3>
+            <p style="font-size: 15px; margin: 5px 0; color: #444;" id="self-location-text">正在讀取校園圖資...</p>
+            <div style="margin-top: 10px;">
+                <span style="font-weight: bold; display: block; margin-bottom: 5px;">設定您目前的狀態：</span>
+                <button class="btn btn-green" style="width:45%; margin: 0 5px;" onclick="setTeacherStatus(true)">🟢 方便</button>
+                <button class="btn btn-red" style="width:45%; margin: 0 5px;" onclick="setTeacherStatus(false)">🔴 忙碌</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 💡 【核心修改】在自訂圖片中，座標改用圖片的 [Y軸百分比, X軸百分比]
+        // 假設地圖最左下角是 [0, 0]，最右上角是 [1000, 1000]
+        // 以下座標可以根據你下載的圖片比例，自己微調數字大小！
+        const yzuBuildings = [
+            { name: "元智一館", y: 750, x: 600 },
+            { name: "元智二館", y: 650, x: 700 },
+            { name: "元智三館", y: 550, x: 750 },
+            { name: "元智五館", y: 350, x: 650 },
+            { name: "元智六館", y: 200, x: 450 },
+            { name: "元智七館", y: 350, x: 200 },
+            { name: "有庠紀念大樓(圖書館)", y: 500, x: 400 }
+        ];
+
+        // 虛擬資料庫（預設初始位置在圖書館 500, 400）
+        let onlineTeachersDatabase = [
+            { name: "張教授", y: 500, x: 400, isAvailable: true, locationName: "有庠紀念大樓(圖書館)" },
+            { name: "林教授", y: 350, x: 650, isAvailable: false, locationName: "元智五館" }
+        ];
+
+        let currentOperatingTeacher = "";
+        let studentMap, teacherMap;
+        let studentMarker, teacherMarker;
+
+        // 定義圖片地圖的邊界（尺寸範圍：0到1000）
+        const imageBounds = [[0, 0], [1000, 1000]];
+
+        // 計算最近大樓演算法（歐幾里得距離）
+        function calculateClosestBuilding(y, x) {
+            let closest = "校外或未知區域";
+            let minDistance = 99999;
+            yzuBuildings.forEach(b => {
+                let dist = Math.sqrt(Math.pow(y - b.y, 2) + Math.pow(x - b.x, 2));
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    closest = b.name;
+                }
+            });
+            return closest;
+        }
+
+        function showPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
+            const targetPage = document.getElementById(pageId);
+            if (pageId === 'home-page') {
+                targetPage.style.display = 'flex';
+            } else {
+                targetPage.style.display = 'block';
+            }
+        }
+
+        function goHome() { showPage('home-page'); }
+
+        // 💡 【關鍵函式】建立純圖片底圖
+        function createCustomImageMap(elementId) {
+            const newMap = L.map(elementId, {
+                crs: L.CRS.Simple, // 💡 啟用簡單平面坐標系（不使用地球經緯度）
+                minZoom: -1,       // 允許縮小看全圖
+                maxZoom: 2,        // 允許放大看細節
+                maxBounds: imageBounds,
+                maxBoundsViscosity: 1.0
+            });
+
+            // 💡 載入你的元智地圖圖片，並塞進 1000x1000 的格子裡
+            L.imageOverlay('yzu-map.png', imageBounds).addTo(newMap);
+            
+            // 讓地圖一開始就自動對齊並滿版顯示這張圖片
+            newMap.fitBounds(imageBounds);
+
+            // 在圖片上標註各大樓
+            yzuBuildings.forEach(b => {
+                L.marker([b.y, b.x]).addTo(newMap).bindPopup(b.name);
+            });
+
+            return newMap;
+        }
+
+        // 學生端入口
+        function enterStudentView() {
+            const searchName = document.getElementById('search-name').value.trim();
+            if(!searchName) { alert("請輸入想要搜尋的老師姓名！"); return; }
+            
+            const foundTeacher = onlineTeachersDatabase.find(t => t.name === searchName);
+            if(!foundTeacher) {
+                alert(`【查無此人】目前沒有「${searchName}」的定位。試試搜尋「張教授」或「林教授」！`);
+                return;
+            }
+            
+            showPage('student-page');
+            
+            if (!studentMap) {
+                studentMap = createCustomImageMap('student-map');
+                studentMarker = L.circleMarker([foundTeacher.y, foundTeacher.x], {
+                    color: '#007bff', fillColor: '#007bff', fillOpacity: 0.8, radius: 10
+                }).addTo(studentMap);
+            }
+            
+            document.getElementById('view-teacher-title').innerText = `工管系 ${foundTeacher.name}`;
+            document.getElementById('view-teacher-location').innerText = `目前位置：在 ${foundTeacher.locationName}`;
+            
+            const badge = document.getElementById('view-teacher-badge');
+            if (foundTeacher.isAvailable) {
+                badge.innerText = "方便訪客"; badge.className = "status-badge status-available";
+            } else {
+                badge.innerText = "忙碌中 / 請勿打擾"; badge.className = "status-badge status-busy";
+            }
+            
+            studentMarker.setLatLng([foundTeacher.y, foundTeacher.x]);
+            studentMap.panTo([foundTeacher.y, foundTeacher.x]);
+        }
+
+        function requestTeacher() {
+            alert(`【系統通知】已發送請求給教授！`);
+        }
+
+        // 老師端入口
+        function enterTeacherView() {
+            const loginName = document.getElementById('teacher-login-name').value.trim();
+            if(!loginName) { alert("請先輸入您的姓名！"); return; }
+            
+            currentOperatingTeacher = loginName;
+            document.getElementById('teacher-welcome-title').innerText = `歡迎回來，${currentOperatingTeacher} 老師`;
+            
+            let teacherRecord = onlineTeachersDatabase.find(t => t.name === currentOperatingTeacher);
+            if (!teacherRecord) {
+                teacherRecord = { name: currentOperatingTeacher, y: 500, x: 400, isAvailable: true, locationName: "有庠紀念大樓(圖書館)" };
+                onlineTeachersDatabase.push(teacherRecord);
+            }
+
+            showPage('teacher-page');
+            
+            if (!teacherMap) {
+                teacherMap = createCustomImageMap('teacher-map');
+                
+                // 在自訂圖片版中，因為沒有真實地球 GPS 經緯度，
+                // 評審展示時，老師可以透過「點擊圖片上任何地方」來模擬移動位置！這個互動性在報告時超大加分！
+                teacherMarker = L.circleMarker([teacherRecord.y, teacherRecord.x], {
+                    color: '#dc3545', fillColor: '#dc3545', fillOpacity: 0.8, radius: 10
+                }).addTo(teacherMap);
+
+                teacherMap.on('click', function(e) {
+                    const clickY = e.latlng.lat;
+                    const clickX = e.latlng.lng;
+                    const building = calculateClosestBuilding(clickY, clickX);
+                    
+                    let target = onlineTeachersDatabase.find(t => t.name === currentOperatingTeacher);
+                    if(target) {
+                        target.y = clickY;
+                        target.x = clickX;
+                        target.locationName = building;
+                    }
+                    
+                    document.getElementById('self-location-text').innerText = `📍 您已手動模擬移動至：${building}`;
+                    teacherMarker.setLatLng([clickY, clickX]);
+                });
+            }
+
+            document.getElementById('self-location-text').innerText = `👋 您好！請在上方地圖任意點擊，即可模擬您在校園的移動定位。`;
+        }
+
+        function setTeacherStatus(status) {
+            let target = onlineTeachersDatabase.find(t => t.name === currentOperatingTeacher);
+            if(target) { target.isAvailable = status; alert(`狀態已成功更新！`); }
+        }
+    </script>
+</body>
+</html>

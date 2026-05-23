@@ -18,6 +18,7 @@
         .btn-blue{background:#007bff;}
         .btn-green{background:#28a745;}
         .btn-red{background:#dc3545;}
+        .btn-gray{background:#6c757d;}
         .input-style{width:100%;padding:12px;font-size:16px;border:2px solid #ddd;border-radius:8px;box-sizing:border-box;margin-bottom:10px;}
         .map-container{height:45%;width:100%;background:#222;}
         .control-panel{height:55%;width:100%;background:white;box-shadow:0 -4px 15px rgba(0,0,0,0.1);border-radius:24px 24px 0 0;position:absolute;bottom:0;z-index:1000;box-sizing:border-box;padding:15px;text-align:center;overflow-y:auto;}
@@ -39,7 +40,7 @@
             <h2>🙋 我是學生</h2>
             <input type="text" id="student-self-name" class="input-style" placeholder="請輸入您的姓名或學號...">
             <input type="text" id="search-name" class="input-style" placeholder="輸入想找的老師姓名...">
-            <button class="btn btn-blue" onclick="enterStudentView()">搜尋老師並查看定位</button>
+            <button class="btn btn-blue" onclick="enterStudentView()">開啟 GPS 並搜尋老師</button>
         </div>
         <div class="role-card">
             <h2>👨‍🏫 我是老師</h2>
@@ -53,15 +54,16 @@
         <div id="student-map" class="map-container"></div>
         <div class="control-panel">
             <h3 id="view-teacher-title">讀取中...</h3>
+            <p id="student-gps-status" style="font-size:12px; color:#666; margin:2px 0;">⏳ 正在獲取您的 GPS 位置...</p>
             <p id="view-teacher-location">正在獲取位置...</p>
-            <p id="distance-indicator" style="font-size:14px; color:#6f42c1; font-weight:bold; margin:3px 0;"></p>
+            <p id="distance-indicator" style="font-size:14px; color:#6f42c1; font-weight:bold; margin:5px 0;">📍 計算距離中...</p>
             <div id="view-teacher-badge" class="status-badge status-available">方便訪客</div>
             <button class="btn btn-blue" onclick="requestTeacher()">🔔 發出「我要找老師」請求</button>
         </div>
     </div>
 
     <div id="teacher-page" class="page">
-        <a href="#" class="back-home" onclick="goHome()">⬅ 返回首頁</a>
+        <a href="#" class="back-home" onclick="goHome()">⬅ 返回首頁 (定位仍在線上)</a>
         <div id="teacher-map" class="map-container"></div>
         <div class="control-panel">
             <h3 id="teacher-welcome-title">歡迎回來</h3>
@@ -85,10 +87,12 @@
                 </div>
             </div>
 
-            <div style="margin-top:5px;">
-                <button class="btn btn-green" style="width:45%;margin:0 5px;padding:10px 0;" onclick="setTeacherStatus(true)">🟢 方便</button>
-                <button class="btn btn-red" style="width:45%;margin:0 5px;padding:10px 0;" onclick="setTeacherStatus(false)">🔴 忙碌</button>
+            <div style="margin-top:5px; display:flex; justify-content: space-around;">
+                <button class="btn btn-green" style="width:30%; padding:10px 0;" onclick="setTeacherStatus(true)">🟢 方便</button>
+                <button class="btn btn-red" style="width:30%; padding:10px 0;" onclick="setTeacherStatus(false)">🔴 忙碌</button>
+                <button class="btn btn-gray" style="width:32%; padding:10px 0; font-size:14px; background:#495057;" onclick="stopTrackingAndLogout()">🛑 停止定位</button>
             </div>
+            
             <div class="inbox-area">
                 <div class="inbox-title">
                     <span>📥 學生預約收件匣 <b style="color:red;" id="msg-count"></b></span>
@@ -100,7 +104,6 @@
     </div>
 
     <script>
-        // 館舍地理資產資料庫 (五館暨圖書館已修正為元智五館)
         const yzuBuildings=[
             {name:"元智一館",y:750,x:600, minFloor:-1, maxFloor:7},
             {name:"元智二館",y:650,x:700, minFloor:-1, maxFloor:7},
@@ -110,9 +113,9 @@
             {name:"元智七館",y:350,x:200, minFloor:-1, maxFloor:10}
         ];
 
-        const mockStudentCoords = {y: 500, x: 550}; 
-        let onlineTeachersDatabase=[{name:"張教授",y:350,x:650,isAvailable:true,locationName:"元智五館 3 樓辦公室"},{name:"林教授",y:200,x:450,isAvailable:false,locationName:"元智六館"}];
-        let currentOperatingTeacher="",studentMap,teacherMap,studentMarker,teacherMarker,teacherGpsWatchId=null,inboxCheckInterval=null,targetTeacherName="";
+        let studentRealCoords = {y: 500, x: 550};
+        let currentOperatingTeacher="", studentMap, teacherMap, studentSelfMarker, teacherMarker, targetTeacherMarker;
+        let teacherGpsWatchId=null, studentGpsWatchId=null, inboxCheckInterval=null, targetTeacherName="";
         const imageBounds=[[0,0],[1000,1000]];
 
         function gpsToImagePixels(lat,lng){
@@ -124,7 +127,13 @@
             yzuBuildings.forEach(b=>{let d=Math.sqrt(Math.pow(y-b.y,2)+Math.pow(x-b.x,2));if(d<minDist){minDist=d;closest=b.name;}});return closest;
         }
         function showPage(id){document.querySelectorAll('.page').forEach(p=>p.style.display='none');document.getElementById(id).style.display=(id==='home-page')?'flex':'block';}
-        function goHome(){if(teacherGpsWatchId!==null){navigator.geolocation.clearWatch(teacherGpsWatchId);teacherGpsWatchId=null;}if(inboxCheckInterval!==null){clearInterval(inboxCheckInterval);inboxCheckInterval=null;}showPage('home-page');}
+        
+        function goHome(){
+            if(teacherGpsWatchId!==null){navigator.geolocation.clearWatch(teacherGpsWatchId); teacherGpsWatchId=null;}
+            if(studentGpsWatchId!==null){navigator.geolocation.clearWatch(studentGpsWatchId); studentGpsWatchId=null;}
+            if(inboxCheckInterval!==null){clearInterval(inboxCheckInterval); inboxCheckInterval=null;}
+            showPage('home-page');
+        }
         
         function createCustomImageMap(id){
             const m=L.map(id,{crs:L.CRS.Simple,minZoom:-1,maxZoom:2,maxBounds:imageBounds,maxBoundsViscosity:1.0});
@@ -133,27 +142,59 @@
             return m;
         }
 
+        function getTeacherFromStorage(name) {
+            let db = JSON.parse(localStorage.getItem('yzu_teachers_db')) || {};
+            return db[name] || null;
+        }
+        function saveTeacherToStorage(name, data) {
+            let db = JSON.parse(localStorage.getItem('yzu_teachers_db')) || {};
+            db[name] = data;
+            localStorage.setItem('yzu_teachers_db', JSON.stringify(db));
+        }
+
         // ──── 🙋 學生端功能 ────
         function enterStudentView(){
             const sName=document.getElementById('student-self-name').value.trim();const sSearch=document.getElementById('search-name').value.trim();
             if(!sName||!sSearch){alert("請輸入您的姓名以及要搜尋的老師！");return;}
-            const t=onlineTeachersDatabase.find(o=>o.name===sSearch);if(!t){alert("查無此人！請輸入「張教授」或「林教授」測試！");return;}
-            targetTeacherName=sSearch;showPage('student-page');
+            
+            const t = getTeacherFromStorage(sSearch);
+            
+            if(!t || t.locationName === "已關閉定位／下班"){
+                alert("該名老師目前不在線上（或已關閉定位功能）！");
+                return;
+            }
+            
+            targetTeacherName=sSearch; showPage('student-page');
             
             if(!studentMap){
                 studentMap=createCustomImageMap('student-map');
-                studentMarker=L.circleMarker([t.y,t.x],{color:'#007bff',fillColor:'#007bff',fillOpacity:0.8,radius:10}).addTo(studentMap);
-                L.marker([mockStudentCoords.y, mockStudentCoords.x]).addTo(studentMap).bindPopup("🙋 我在這裡 (大草皮)");
+                studentSelfMarker=L.circleMarker([studentRealCoords.y, studentRealCoords.x],{color:'#28a745',fillColor:'#28a745',fillOpacity:0.9,radius:8}).addTo(studentMap).bindPopup("🙋 我目前的位置");
+                targetTeacherMarker=L.circleMarker([t.y,t.x],{color:'#dc3545',fillColor:'#dc3545',fillOpacity:0.8,radius:10}).addTo(studentMap).bindPopup(`👨‍🏫 ${t.name}`);
             }
             
-            let pixelDist = Math.sqrt(Math.pow(mockStudentCoords.y - t.y, 2) + Math.pow(mockStudentCoords.x - t.x, 2));
-            let meters = Math.round(pixelDist * 0.4);let minutes = Math.ceil(meters / 80);
-            document.getElementById('distance-indicator').innerText = `📍 您距離老師約 ${meters} 公尺 (步行預計 ${minutes} 分鐘)`;
+            if(navigator.geolocation){
+                studentGpsWatchId = navigator.geolocation.watchPosition(p=>{
+                    const coords = gpsToImagePixels(p.coords.latitude, p.coords.longitude);
+                    studentRealCoords.y = coords.y; studentRealCoords.x = coords.x;
+                    document.getElementById('student-gps-status').innerText = `📡 學生 GPS 訊號正常 (已連線)`;
+                    studentSelfMarker.setLatLng([coords.y, coords.x]);
+                    
+                    let freshTeacher = getTeacherFromStorage(targetTeacherName);
+                    let pixelDist = Math.sqrt(Math.pow(coords.y - freshTeacher.y, 2) + Math.pow(coords.x - freshTeacher.x, 2));
+                    let meters = Math.round(pixelDist * 0.4); let minutes = Math.ceil(meters / 80);
+                    document.getElementById('distance-indicator').innerText = `📍 您與老師的真實距離約 ${meters} 公尺 (步行約 ${minutes} 分鐘)`;
+                }, e=>{
+                    document.getElementById('student-gps-status').innerText = `ℹ️ 室外GPS訊號弱，目前使用校園基地台大致定位。`;
+                },{enableHighAccuracy:true,timeout:10000,maximumAge:0});
+            }
 
-            document.getElementById('view-teacher-title').innerText=`工管系 ${t.name}`;
+            // 🌟 這裡修正為「學生：[老師姓名]」
+            document.getElementById('view-teacher-title').innerText=`學生：${t.name}`;
             document.getElementById('view-teacher-location').innerText=`目前位置：在 ${t.locationName}`;
             const b=document.getElementById('view-teacher-badge');b.innerText=t.isAvailable?"方便訪客":"忙碌中";b.className=t.isAvailable?"status-badge status-available":"status-badge status-busy";
-            studentMarker.setLatLng([t.y,t.x]);studentMap.panTo([t.y,t.x]);
+            
+            targetTeacherMarker.setLatLng([t.y,t.x]);
+            studentMap.panTo([t.y,t.x]);
         }
 
         function requestTeacher(){
@@ -166,22 +207,33 @@
         function enterTeacherView(){
             const tName=document.getElementById('teacher-login-name').value.trim();if(!tName){alert("請輸入您的姓名！");return;}
             currentOperatingTeacher=tName;document.getElementById('teacher-welcome-title').innerText=`歡迎回來，${tName} 老師`;
-            let rec=onlineTeachersDatabase.find(o=>o.name===currentOperatingTeacher);
-            if(!rec){rec={name:currentOperatingTeacher,y:350,x:650,isAvailable:true,locationName:"元智五館"};onlineTeachersDatabase.push(rec);}
-            showPage('teacher-page');
             
+            let rec = getTeacherFromStorage(currentOperatingTeacher);
+            if(!rec || rec.locationName === "已關閉定位／下班"){
+                rec = {name:currentOperatingTeacher, y:350, x:650, isAvailable:true, locationName:"元智五館"};
+                saveTeacherToStorage(currentOperatingTeacher, rec);
+            }
+            
+            showPage('teacher-page');
             if(!teacherMap){
                 teacherMap=createCustomImageMap('teacher-map');
                 teacherMarker=L.circleMarker([rec.y,rec.x],{color:'#dc3545',fillColor:'#dc3545',fillOpacity:0.8,radius:10}).addTo(teacherMap);
             }
             updateTeacherInbox();inboxCheckInterval=setInterval(updateTeacherInbox,1500);
-            
+            startGpsTracking();
+        }
+
+        function startGpsTracking() {
             if(navigator.geolocation){
                 document.getElementById('self-location-text').innerText="⏳ 正在獲取手機 GPS 定位...";
                 teacherGpsWatchId=navigator.geolocation.watchPosition(p=>{
                     if (document.getElementById('building-select').value === "") {
                         const coords=gpsToImagePixels(p.coords.latitude,p.coords.longitude);const bld=calculateClosestBuilding(coords.y,coords.x);
-                        let target=onlineTeachersDatabase.find(o=>o.name===currentOperatingTeacher);if(target){target.y=coords.y;target.x=coords.x;target.locationName=bld;}
+                        let target = getTeacherFromStorage(currentOperatingTeacher);
+                        if(target){
+                            target.y=coords.y; target.x=coords.x; target.locationName=bld;
+                            saveTeacherToStorage(currentOperatingTeacher, target);
+                        }
                         document.getElementById('self-location-text').innerText=`📡 GPS 自動追蹤：目前在大致在 ${bld}`;
                         teacherMarker.setLatLng([coords.y,coords.x]);teacherMap.panTo([coords.y,coords.x]);
                     }
@@ -189,61 +241,47 @@
             }
         }
 
+        function stopTrackingAndLogout() {
+            let target = getTeacherFromStorage(currentOperatingTeacher);
+            if(target){
+                target.isAvailable=false; 
+                target.locationName="已關閉定位／下班";
+                saveTeacherToStorage(currentOperatingTeacher, target);
+            }
+            goHome();
+            alert("🛑 定位連線已完全切斷！系統已將您切換為離線下班。");
+        }
+
         function updateFloorOptions() {
             const bIdx = document.getElementById('building-select').value;
             const fSelect = document.getElementById('floor-select');
-            
-            if(bIdx === "") {
-                fSelect.innerHTML = '<option value="">-- 請先選擇大樓 --</option>';
-                fSelect.disabled = true;
-                enterTeacherView();
-                return;
-            }
-
-            fSelect.disabled = false;
-            const building = yzuBuildings[parseInt(bIdx)];
-            let html = '<option value="">-- 請選擇確切樓層 --</option>';
-            
-            for(let f = building.minFloor; f <= building.maxFloor; f++) {
-                if(f === 0) continue; 
-                let label = f < 0 ? `地下 ${Math.abs(f)} 層 (B${Math.abs(f)})` : `地上 ${f} 層 (${f}F)`;
-                html += `<option value="${f}">${label}</option>`;
-            }
+            if(bIdx === "") {fSelect.innerHTML = '<option value="">-- 請先選擇大樓 --</option>';fSelect.disabled = true; startGpsTracking(); return;}
+            fSelect.disabled = false;const building = yzuBuildings[parseInt(bIdx)];let html = '<option value="">-- 請選擇確切樓層 --</option>';
+            for(let f = building.minFloor; f <= building.maxFloor; f++) {if(f === 0) continue;let label = f < 0 ? `地下 ${Math.abs(f)} 層 (B${Math.abs(f)})` : `地上 ${f} 層 (${f}F)`;html += `<option value="${f}">${label}</option>`;}
             fSelect.innerHTML = html;
         }
-
         function correctLocationManually() {
-            const bIdx = document.getElementById('building-select').value;
-            const floor = document.getElementById('floor-select').value;
-            if(bIdx === "" || floor === "") return;
-
-            const selectedBuilding = yzuBuildings[parseInt(bIdx)];
-            let floorLabel = floor < 0 ? `B${Math.abs(floor)}` : `${floor}F`;
-            let fullLocationDescription = `${selectedBuilding.name} 的 ${floorLabel} 辦公室`;
-
-            let target = onlineTeachersDatabase.find(o=>o.name===currentOperatingTeacher);
+            const bIdx = document.getElementById('building-select').value;const floor = document.getElementById('floor-select').value;if(bIdx === "" || floor === "") return;
+            const selectedBuilding = yzuBuildings[parseInt(bIdx)];let floorLabel = floor < 0 ? `B${Math.abs(floor)}` : `${floor}F`;let fullLocationDescription = `${selectedBuilding.name} 的 ${floorLabel} 辦公室`;
+            let target = getTeacherFromStorage(currentOperatingTeacher);
             if(target){
-                target.y = selectedBuilding.y;
-                target.x = selectedBuilding.x;
-                target.locationName = fullLocationDescription;
+                target.y = selectedBuilding.y; target.x = selectedBuilding.x; target.locationName = fullLocationDescription;
+                saveTeacherToStorage(currentOperatingTeacher, target);
             }
-
             document.getElementById('self-location-text').innerText=`🏢 已啟動高精度校正：鎖定在【${fullLocationDescription}】`;
-            teacherMarker.setLatLng([selectedBuilding.y, selectedBuilding.x]);
-            teacherMap.panTo([selectedBuilding.y, selectedBuilding.x]);
+            teacherMarker.setLatLng([selectedBuilding.y, selectedBuilding.x]);teacherMap.panTo([selectedBuilding.y, selectedBuilding.x]);
         }
-
         function updateTeacherInbox(){
             const reqs=JSON.parse(localStorage.getItem('yzu_reqs'))||[];const myReqs=reqs.filter(r=>r.teacher===currentOperatingTeacher);
             const list=document.getElementById('inbox-list');const badge=document.getElementById('msg-count');
             if(myReqs.length===0){badge.innerText="";list.innerHTML='<div style="font-size:13px;color:#999;text-align:center;">目前沒有收到請求。</div>';}
             else{badge.innerText=`(${myReqs.length})`;let html="";myReqs.forEach(r=>{html+=`<div class="message-item"><span>⏱️ [${r.time}] <b>${r.student}</b> 同學發起請求</span></div>`;});list.innerHTML=html;}
         }
-        function clearInbox(){
-            let reqs=JSON.parse(localStorage.getItem('yzu_reqs'))||[];reqs=reqs.filter(r=>r.teacher!==currentOperatingTeacher);
-            localStorage.setItem('yzu_reqs',JSON.stringify(reqs));updateTeacherInbox();alert("收件匣已清空！");
+        function clearInbox(){let reqs=JSON.parse(localStorage.getItem('yzu_reqs'))||[];reqs=reqs.filter(r=>r.teacher!==currentOperatingTeacher);localStorage.setItem('yzu_reqs',JSON.stringify(reqs));updateTeacherInbox();alert("收件匣已清空！");}
+        function setTeacherStatus(st){
+            let target = getTeacherFromStorage(currentOperatingTeacher);
+            if(target){ target.isAvailable=st; saveTeacherToStorage(currentOperatingTeacher, target); alert("狀態已更新！"); }
         }
-        function setTeacherStatus(st){let target=onlineTeachersDatabase.find(o=>o.name===currentOperatingTeacher);if(target){target.isAvailable=st;alert("狀態已更新！");}}
     </script>
 </body>
 </html>
